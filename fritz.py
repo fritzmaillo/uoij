@@ -21,7 +21,7 @@ logger = logging.getLogger("StreamAutomation")
 @dataclass(frozen=True)
 class ConfigAplicatie:
     api_geolocatie: str = "http://ip-api.com/json/"
-    canal_codat_base64: str = "cGds"
+    canal_codat_base64: str = "YnJ1dGFsbGVz"
     sablon_url: str = "https://www.twitch.tv/{}"
     timeout_click: int = 4
     pauza_scurta: int = 2
