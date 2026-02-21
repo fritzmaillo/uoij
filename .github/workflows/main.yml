@@ -7,17 +7,20 @@ on:
 
 env:
   PYTHON_VERSION: "3.13"
-  OS_RUNNER: "ubuntu-latest"
   LANG: "en_US.UTF-8"
 
 jobs:
   automatizare-stream:
     name: Rulare Automatizare Browser
-    runs-on: ${{ env.OS_RUNNER }}
+
+    runs-on: ${{ matrix.os }}
 
     strategy:
       fail-fast: false
       max-parallel: 1
+      matrix:
+        os: [ubuntu-latest]
+
 
     steps:
 
