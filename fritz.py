@@ -1,188 +1,209 @@
 import base64
 import logging
 import random
-from typing import Optional, Tuple
 from dataclasses import dataclass
+from typing import Tuple
 import requests
 from seleniumbase import SB
 
-# Configurare sistem de logare
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
+
+# ==============================
+# CONFIGURARE GLOBALĂ
+# ==============================
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+)
+logger = logging.getLogger("StreamAutomation")
+
+
+@dataclass(frozen=True)
+class ConfigAplicatie:
+    api_geolocatie: str = "http://ip-api.com/json/"
+    canal_codat_base64: str = "cGds"
+    sablon_url: str = "https://www.twitch.tv/{}"
+    timeout_click: int = 4
+    pauza_scurta: int = 2
+    pauza_medie: int = 10
+    pauza_lunga_min: int = 400
+    pauza_lunga_max: int = 900
 
 
 @dataclass
-class LocatieGeografica:
-    """Reprezintă informații despre locația geografică și fusul orar."""
+class Locatie:
     latitudine: float
     longitudine: float
     fus_orar: str
     cod_tara: str
 
 
-class AutomatizareBrowserStream:
-    """Gestionează automatizarea browserului pentru interacțiuni cu platforma de streaming."""
-    
-    # Constante de configurare
-    API_GEOLOCATIE = "http://ip-api.com/json/"
-    CANAL_TINTA = "YnJ1dGFsbGVz"  # Nume canal codificat Base64
-    SABLON_URL_TINTA = "https://www.twitch.tv/{}"
-    TIMEOUT_CLICK = 4
-    PAUZA_SCURTA = 2
-    PAUZA_MEDIE = 10
-    PAUZA_LUNGA_MIN = 400
-    PAUZA_LUNGA_MAX = 900
-    
-    SELECTORI = {
-        "buton_accept": 'button:contains("Accept")',
-        "buton_start_vizionare": 'button:contains("Start Watching")',
-        "stream_live": "#live-channel-stream-information",
-    }
-    
-    def __init__(self):
-        """Inițializează automatizarea browserului cu datele de geolocație."""
-        self.locatie = self._obtine_geolocatia()
-        self.url_tinta = self._construieste_url_tinta()
-        self.durata_pauza_random = random.randint(
-            self.PAUZA_LUNGA_MIN, 
-            self.PAUZA_LUNGA_MAX
-        )
-    
-    @staticmethod
-    def _obtine_geolocatia() -> LocatieGeografica:
-        """
-        Obține informațiile de geolocație pe baza IP-ului.
-        
-        Returnează:
-            LocatieGeografica: Obiect cu latitudine, longitudine, fus orar și cod țară.
-            
-        Ridică:
-            requests.RequestException: Dacă apelul API eșuează.
-        """
+# ==============================
+# SERVICIU GEOLOCAȚIE
+# ==============================
+
+class ServiciuGeolocatie:
+
+    def __init__(self, config: ConfigAplicatie):
+        self.config = config
+
+    def obtine_locatie_curenta(self) -> Locatie:
         try:
-            raspuns = requests.get(AutomatizareBrowserStream.API_GEOLOCATIE, timeout=5)
+            raspuns = requests.get(self.config.api_geolocatie, timeout=5)
             raspuns.raise_for_status()
             date = raspuns.json()
-            
-            return LocatieGeografica(
+
+            return Locatie(
                 latitudine=date["lat"],
                 longitudine=date["lon"],
                 fus_orar=date["timezone"],
                 cod_tara=date["countryCode"].lower()
             )
         except requests.RequestException as eroare:
-            logger.error(f"Eroare la obținerea geolocației: {eroare}")
+            logger.error("Eroare la obținerea geolocației: %s", eroare)
             raise
-    
-    @staticmethod
-    def _construieste_url_tinta() -> str:
-        """
-        Decodează numele canalului din Base64 și construiește URL-ul țintă.
-        
-        Returnează:
-            str: URL complet către canalul de streaming.
-        """
-        nume_codat = AutomatizareBrowserStream.CANAL_TINTA
-        nume_decodat = base64.b64decode(nume_codat).decode("utf-8")
-        return AutomatizareBrowserStream.SABLON_URL_TINTA.format(nume_decodat)
-    
-    def _accepta_dialoguri(self, driver: SB) -> None:
-        """
-        Acceptă eventualele dialoguri de consimțământ/cookie-uri.
-        
-        Args:
-            driver: Instanță SeleniumBase.
-        """
-        if driver.is_element_present(self.SELECTORI["buton_accept"]):
-            driver.cdp.click(self.SELECTORI["buton_accept"], timeout=self.TIMEOUT_CLICK)
-            driver.sleep(self.PAUZA_SCURTA)
-    
-    def _asteapta_incarcare_stream(self, driver: SB) -> None:
-        """
-        Așteaptă încărcarea streamului și gestionează butonul de pornire vizionare.
-        
-        Args:
-            driver: Instanță SeleniumBase.
-        """
-        driver.sleep(self.PAUZA_MEDIE)
-        if driver.is_element_present(self.SELECTORI["buton_start_vizionare"]):
-            driver.cdp.click(self.SELECTORI["buton_start_vizionare"], timeout=self.TIMEOUT_CLICK)
-            driver.sleep(self.PAUZA_MEDIE)
-    
-    def _initializeaza_driver(self, driver: SB, mod_nedetectabil: bool = False) -> SB:
-        """
-        Inițializează și configurează o instanță de driver.
-        
-        Args:
-            driver: Instanță SeleniumBase.
-            mod_nedetectabil: Activează modul nedetectabil dacă este True.
-            
-        Returnează:
-            SB: Instanța de driver configurată.
-        """
+
+
+# ==============================
+# MANAGER BROWSER
+# ==============================
+
+class ManagerBrowser:
+
+    SELECTORI = {
+        "accept_cookie": 'button:contains("Accept")',
+        "start_vizionare": 'button:contains("Start Watching")',
+        "indicator_live": "#live-channel-stream-information",
+    }
+
+    def __init__(self, config: ConfigAplicatie, locatie: Locatie):
+        self.config = config
+        self.locatie = locatie
+
+    def construieste_url_canal(self) -> str:
+        nume_decodat = base64.b64decode(
+            self.config.canal_codat_base64
+        ).decode("utf-8")
+
+        return self.config.sablon_url.format(nume_decodat)
+
+    def initializeaza_driver(self, driver: SB, url: str) -> None:
         driver.activate_cdp_mode(
-            self.url_tinta,
+            url,
             tzone=self.locatie.fus_orar,
             geoloc=(self.locatie.latitudine, self.locatie.longitudine)
         )
-        driver.sleep(self.PAUZA_SCURTA)
-        self._accepta_dialoguri(driver)
-        return driver
-    
-    def _ruleaza_browser_secundar(self, driver_principal: SB) -> None:
-        """
-        Lansează și gestionează o instanță secundară de browser.
-        
-        Args:
-            driver_principal: Instanța principală SeleniumBase.
-        """
+        driver.sleep(self.config.pauza_scurta)
+        self.accepta_cookie(driver)
+
+    def accepta_cookie(self, driver: SB) -> None:
+        if driver.is_element_present(self.SELECTORI["accept_cookie"]):
+            driver.cdp.click(
+                self.SELECTORI["accept_cookie"],
+                timeout=self.config.timeout_click
+            )
+            driver.sleep(self.config.pauza_scurta)
+
+    def porneste_stream_daca_e_necesar(self, driver: SB) -> None:
+        driver.sleep(self.config.pauza_medie)
+
+        if driver.is_element_present(self.SELECTORI["start_vizionare"]):
+            driver.cdp.click(
+                self.SELECTORI["start_vizionare"],
+                timeout=self.config.timeout_click
+            )
+            driver.sleep(self.config.pauza_medie)
+
+    def stream_este_live(self, driver: SB) -> bool:
+        return driver.is_element_present(
+            self.SELECTORI["indicator_live"]
+        )
+
+
+# ==============================
+# SERVICIU AUTOMATIZARE STREAM
+# ==============================
+
+class ServiciuAutomatizareStream:
+
+    def __init__(self):
+        self.config = ConfigAplicatie()
+        self.serviciu_geo = ServiciuGeolocatie(self.config)
+        self.locatie = self.serviciu_geo.obtine_locatie_curenta()
+        self.manager_browser = ManagerBrowser(self.config, self.locatie)
+
+        self.durata_random = random.randint(
+            self.config.pauza_lunga_min,
+            self.config.pauza_lunga_max
+        )
+
+    def ruleaza_browser_secundar(self, driver_principal: SB) -> None:
         try:
-            driver_secundar = driver_principal.get_new_driver(undetectable=True)
-            self._initializeaza_driver(driver_secundar, mod_nedetectabil=True)
-            self._asteapta_incarcare_stream(driver_secundar)
-            self._accepta_dialoguri(driver_secundar)
-            driver_principal.sleep(self.durata_pauza_random)
+            driver_secundar = driver_principal.get_new_driver(
+                undetectable=True
+            )
+
+            url = self.manager_browser.construieste_url_canal()
+
+            self.manager_browser.initializeaza_driver(
+                driver_secundar,
+                url
+            )
+
+            self.manager_browser.porneste_stream_daca_e_necesar(
+                driver_secundar
+            )
+
+            self.manager_browser.accepta_cookie(driver_secundar)
+
+            driver_principal.sleep(self.durata_random)
+
         except Exception as eroare:
-            logger.error(f"Eroare browser secundar: {eroare}")
-        finally:
-            # Curățare dacă este necesar
-            pass
-    
+            logger.error("Eroare la browser secundar: %s", eroare)
+
     def ruleaza(self) -> None:
-        """
-        Execută bucla principală de automatizare.
-        
-        Monitorizează continuu pagina de streaming și gestionează mai multe instanțe de browser.
-        """
+        url = self.manager_browser.construieste_url_canal()
+
         while True:
             try:
                 with SB(
-                    uc=True, 
+                    uc=True,
                     locale="en",
                     ad_block=True,
                     chromium_arg="--disable-webgl"
                 ) as driver_principal:
-                    self._initializeaza_driver(driver_principal)
-                    self._asteapta_incarcare_stream(driver_principal)
-                    self._accepta_dialoguri(driver_principal)
-                    
-                    # Verifică dacă streamul live este prezent
-                    if driver_principal.is_element_present(self.SELECTORI["stream_live"]):
-                        self._accepta_dialoguri(driver_principal)
-                        self._ruleaza_browser_secundar(driver_principal)
+
+                    self.manager_browser.initializeaza_driver(
+                        driver_principal,
+                        url
+                    )
+
+                    self.manager_browser.porneste_stream_daca_e_necesar(
+                        driver_principal
+                    )
+
+                    self.manager_browser.accepta_cookie(driver_principal)
+
+                    if self.manager_browser.stream_este_live(driver_principal):
+                        logger.info("Stream live detectat.")
+                        self.ruleaza_browser_secundar(driver_principal)
                     else:
-                        logger.info("Stream live negăsit, se oprește automatizarea")
+                        logger.info("Stream live indisponibil. Oprire.")
                         break
+
             except Exception as eroare:
-                logger.error(f"Automatizarea a eșuat: {eroare}")
+                logger.error("Automatizarea a eșuat: %s", eroare)
                 break
 
 
-def principal():
-    """Punctul de intrare în script."""
-    automatizare = AutomatizareBrowserStream()
-    automatizare.ruleaza()
+# ==============================
+# ENTRY POINT
+# ==============================
+
+def main():
+    aplicatie = ServiciuAutomatizareStream()
+    aplicatie.ruleaza()
 
 
 if __name__ == "__main__":
-    principal()
+    main()
